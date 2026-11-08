@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#121212">
+    <title>Ultrasonic Radar Dashboard</title>
+    <link rel="stylesheet" href="assets/css/styles.css">
+</head>
+<body>
+    <header class="topbar">
+        <div>
+            <p class="eyebrow">ESP32 · HC-SR04 · SG90</p>
+            <h1>Ultrasonic Radar</h1>
+        </div>
+        <div id="conn-status" class="conn-status disconnected">○ CONNECTING…</div>
+    </header>
+
+    <main class="container">
+        <section class="panel radar-panel">
+            <div class="panel-heading">
+                <div>
+                    <p class="eyebrow">LIVE SENSOR VIEW</p>
+                    <h2>Radar display</h2>
+                </div>
+                <span id="lbl-mode" class="mode-pill">WAITING</span>
+            </div>
+
+            <canvas id="radarCanvas" width="420" height="420" aria-label="Live radar display"></canvas>
+
+            <div class="radar-controls">
+                <label for="range-slider">Display range <strong><span id="range-label">200</span> cm</strong></label>
+                <input id="range-slider" type="range" min="50" max="400" step="10" value="200">
+            </div>
+            <p class="hint">Select a detected blip to highlight its track. Click empty space to clear the selection.</p>
+            <div class="legend">
+                <span><i class="dot small"></i>Small</span>
+                <span><i class="dot medium"></i>Medium</span>
+                <span><i class="dot large"></i>Large</span>
+                <span><i class="dot locked"></i>Selected</span>
+            </div>
+        </section>
+
+        <aside class="side-column">
+            <section class="panel control-panel">
+                <p class="eyebrow">HARDWARE CONTROL</p>
+                <h2>Scan session</h2>
+                <div class="scan-status-row">
+                    <span>Scan status</span>
+                    <strong id="scan-status" class="state-value">Starting…</strong>
+                </div>
+                <label for="scan-duration">Scan duration</label>
+                <select id="scan-duration">
+                    <option value="5">5 seconds</option>
+                    <option value="10" selected>10 seconds</option>
+                    <option value="30">30 seconds</option>
+                    <option value="60">1 minute</option>
+                    <option value="120">2 minutes</option>
+                    <option value="300">5 minutes</option>
+                    <option value="0">Continuous</option>
+                </select>
+                <div class="button-row">
+                    <button id="btn-start-scan" class="primary-button" type="button">Start scan</button>
+                    <button id="btn-stop-scan" class="secondary-button" type="button">Stop</button>
+                </div>
+                <p class="hint control-hint">The sensor scans a 160° front sector. Continuous mode runs until stopped.</p>
+            </section>
+
+            <section class="panel telemetry-panel">
+                <p class="eyebrow">LIVE MEASUREMENTS</p>
+                <h2>Telemetry</h2>
+                <div class="status-item"><span>Sensor bearing</span><strong id="lbl-angle">—</strong></div>
+                <div class="status-item"><span>Distance</span><strong id="lbl-distance">—</strong></div>
+                <div class="status-item"><span>Cartesian (X, Y)</span><strong id="lbl-xy">—</strong></div>
+
+                <h2 class="subheading">Selected track</h2>
+                <div class="status-item"><span>Track ID</span><strong id="lbl-target-id" class="amber">NONE</strong></div>
+                <div class="status-item"><span>Bearing / distance</span><strong id="lbl-target-coords">—</strong></div>
+                <div class="status-item"><span>Velocity</span><strong id="lbl-target-vel">—</strong></div>
+                <div class="status-item"><span>Estimated size</span><strong id="lbl-target-size">—</strong></div>
+            </section>
+
+            <section class="panel note-panel">
+                <p class="eyebrow">SYSTEM NOTE</p>
+                <p>Selecting a blip sends its bearing to the ESP32, which points the radar servo at that track (hardware mode only). The display continues to show the locked track.</p>
+            </section>
+        </aside>
+    </main>
+
+    <section class="panel log-panel">
+        <div class="panel-heading">
+            <div>
+                <p class="eyebrow">EVENT HISTORY</p>
+                <h2>System logs</h2>
+            </div>
+            <label class="sound-toggle"><input type="checkbox" id="chk-sound" checked> Sound</label>
+        </div>
+        <div id="output-container" class="log-box" aria-live="polite"></div>
+    </section>
+
+    <script src="assets/js/app.js"></script>
+</body>
+</html>

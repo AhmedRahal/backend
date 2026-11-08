@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "author": "radar",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-arduino-uno", "id": "uno", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-hc-sr04", "id": "sonar", "top": -120, "left": 150, "attrs": { "distance": "100" } },
+    { "type": "wokwi-servo", "id": "servo", "top": -120, "left": 330, "attrs": {} }
+  ],
+  "connections": [
+    [ "sonar:VCC", "uno:5V", "red", [] ],
+    [ "sonar:GND", "uno:GND.2", "black", [] ],
+    [ "sonar:TRIG", "uno:9", "green", [] ],
+    [ "sonar:ECHO", "uno:10", "blue", [] ],
+    [ "servo:V+", "uno:5V", "red", [] ],
+    [ "servo:GND", "uno:GND.2", "black", [] ],
+    [ "servo:PWM", "uno:6", "orange", [] ]
+  ],
+  "dependencies": {}
+}

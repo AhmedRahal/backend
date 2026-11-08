@@ -1,0 +1,1942 @@
+PROJECT: arduino test
+FILES:
+  air def/index.html
+  air def/assets/css/styles.css
+  air def/assets/js/app.js
+  air def/backend/__init__.py
+  air def/backend/app.py
+  air def/backend/process.py
+  air def/backend/run.py
+  air def/backend/sources/__init__.py
+  air def/backend/sources/arduino.py
+  air def/backend/sources/simulate_radar.py
+  air def/src/main.cpp
+
+
+<!-- ====================================================================== -->
+<!-- FILE: air def/index.html -->
+<!-- ====================================================================== -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#121212">
+    <title>Ultrasonic Radar Dashboard</title>
+    <link rel="stylesheet" href="assets/css/styles.css">
+</head>
+<body>
+    <header class="topbar">
+        <div>
+            <p class="eyebrow">ESP32 · HC-SR04 · SG90</p>
+            <h1>Ultrasonic Radar</h1>
+        </div>
+        <div id="conn-status" class="conn-status disconnected">○ CONNECTING…</div>
+    </header>
+
+    <main class="container">
+        <section class="panel radar-panel">
+            <div class="panel-heading">
+                <div>
+                    <p class="eyebrow">LIVE SENSOR VIEW</p>
+                    <h2>Radar display</h2>
+                </div>
+                <span id="lbl-mode" class="mode-pill">WAITING</span>
+            </div>
+
+            <canvas id="radarCanvas" width="420" height="420" aria-label="Live radar display"></canvas>
+
+            <div class="radar-controls">
+                <label for="range-slider">Display range <strong><span id="range-label">200</span> cm</strong></label>
+                <input id="range-slider" type="range" min="50" max="400" step="10" value="200">
+            </div>
+            <p class="hint">Select a detected blip to highlight its track. Click empty space to clear the selection.</p>
+            <div class="legend">
+                <span><i class="dot small"></i>Small</span>
+                <span><i class="dot medium"></i>Medium</span>
+                <span><i class="dot large"></i>Large</span>
+                <span><i class="dot locked"></i>Selected</span>
+            </div>
+        </section>
+
+        <aside class="side-column">
+            <section class="panel control-panel">
+                <p class="eyebrow">HARDWARE CONTROL</p>
+                <h2>Scan session</h2>
+                <div class="scan-status-row">
+                    <span>Scan status</span>
+                    <strong id="scan-status" class="state-value">Starting…</strong>
+                </div>
+                <label for="scan-duration">Scan duration</label>
+                <select id="scan-duration">
+                    <option value="5">5 seconds</option>
+                    <option value="10" selected>10 seconds</option>
+                    <option value="30">30 seconds</option>
+                    <option value="60">1 minute</option>
+                    <option value="120">2 minutes</option>
+                    <option value="300">5 minutes</option>
+                    <option value="0">Continuous</option>
+                </select>
+                <div class="button-row">
+                    <button id="btn-start-scan" class="primary-button" type="button">Start scan</button>
+                    <button id="btn-stop-scan" class="secondary-button" type="button">Stop</button>
+                </div>
+                <p class="hint control-hint">The sensor scans a 160° front sector. Continuous mode runs until stopped.</p>
+            </section>
+
+            <section class="panel telemetry-panel">
+                <p class="eyebrow">LIVE MEASUREMENTS</p>
+                <h2>Telemetry</h2>
+                <div class="status-item"><span>Sensor bearing</span><strong id="lbl-angle">—</strong></div>
+                <div class="status-item"><span>Distance</span><strong id="lbl-distance">—</strong></div>
+                <div class="status-item"><span>Cartesian (X, Y)</span><strong id="lbl-xy">—</strong></div>
+
+                <h2 class="subheading">Selected track</h2>
+                <div class="status-item"><span>Track ID</span><strong id="lbl-target-id" class="amber">NONE</strong></div>
+                <div class="status-item"><span>Bearing / distance</span><strong id="lbl-target-coords">—</strong></div>
+                <div class="status-item"><span>Velocity</span><strong id="lbl-target-vel">—</strong></div>
+                <div class="status-item"><span>Estimated size</span><strong id="lbl-target-size">—</strong></div>
+            </section>
+
+            <section class="panel note-panel">
+                <p class="eyebrow">SYSTEM NOTE</p>
+                <p>Target selection is a dashboard feature only. The ESP32 controls the radar scan servo and does not receive target-aiming commands.</p>
+            </section>
+        </aside>
+    </main>
+
+    <section class="panel log-panel">
+        <div class="panel-heading">
+            <div>
+                <p class="eyebrow">EVENT HISTORY</p>
+                <h2>System logs</h2>
+            </div>
+            <label class="sound-toggle"><input type="checkbox" id="chk-sound" checked> Sound</label>
+        </div>
+        <div id="output-container" class="log-box" aria-live="polite"></div>
+    </section>
+
+    <script src="assets/js/app.js"></script>
+</body>
+</html>
+
+
+/* ====================================================================== */
+/* FILE: air def/assets/css/styles.css */
+/* ====================================================================== */
+:root {
+    color-scheme: dark;
+    --bg: #101411;
+    --panel-bg: #1a211d;
+    --panel-inner: #0c110e;
+    --border: #2c3a31;
+    --accent: #00ed72;
+    --accent-dim: rgba(0, 237, 114, 0.18);
+    --warn: #ffc15c;
+    --danger: #ff6262;
+    --text: #e6eee8;
+    --text-dim: #91a197;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    padding: 24px;
+    background: radial-gradient(circle at 50% -20%, #1d2b21 0, var(--bg) 48%);
+    color: var(--text);
+    font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+}
+
+.topbar, .container, .log-panel {
+    width: min(1100px, 100%);
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 18px;
+}
+
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 0; font-size: clamp(20px, 3vw, 27px); letter-spacing: 2px; text-transform: uppercase; }
+h2 { margin-bottom: 12px; font-size: 14px; letter-spacing: 1.5px; text-transform: uppercase; }
+.eyebrow { margin-bottom: 6px; color: var(--accent); font-size: 10px; letter-spacing: 2px; }
+
+.conn-status, .mode-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text-dim);
+    font-size: 11px;
+    white-space: nowrap;
+}
+.conn-status.live { border-color: var(--accent); color: var(--accent); }
+.conn-status.disconnected { border-color: var(--danger); color: var(--danger); }
+.mode-pill { color: var(--accent); border-color: var(--accent-dim); }
+
+.container {
+    display: grid;
+    grid-template-columns: minmax(360px, 1.2fr) minmax(300px, 0.8fr);
+    align-items: start;
+    gap: 18px;
+}
+.side-column { display: grid; gap: 14px; }
+.panel {
+    min-width: 0;
+    padding: 17px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: linear-gradient(145deg, rgba(31, 42, 35, 0.98), var(--panel-bg));
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+}
+.radar-panel { display: flex; flex-direction: column; align-items: stretch; gap: 13px; }
+.panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.panel-heading h2 { margin-bottom: 0; }
+
+canvas {
+    display: block;
+    width: min(100%, 420px);
+    height: auto;
+    aspect-ratio: 1;
+    align-self: center;
+    background: #070c09;
+    border: 1px solid var(--accent-dim);
+    border-radius: 50%;
+    box-shadow: 0 0 22px rgba(0, 237, 114, 0.07);
+    cursor: crosshair;
+}
+
+.radar-controls { display: grid; gap: 8px; color: var(--text-dim); font-size: 11px; }
+.radar-controls label { display: flex; justify-content: space-between; gap: 10px; }
+.radar-controls strong { color: var(--text); }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.hint { margin: 0; color: #839087; font-size: 10px; line-height: 1.55; text-align: center; }
+.control-hint { margin-top: 10px; text-align: left; }
+.legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; color: var(--text-dim); font-size: 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 8px; height: 8px; border: 1px solid rgba(255,255,255,.2); border-radius: 50%; }
+.dot.small { background: #00ccff; }
+.dot.medium { background: #00ed72; }
+.dot.large { background: #ffc15c; }
+.dot.locked { background: #ff6262; }
+
+.control-panel label { display: block; margin: 12px 0 7px; color: var(--text-dim); font-size: 11px; }
+.scan-status-row, .status-item { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.scan-status-row { margin: 8px 0 12px; font-size: 11px; color: var(--text-dim); }
+.state-value { color: var(--accent); text-align: right; }
+select {
+    width: 100%;
+    padding: 10px 11px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--panel-inner);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+}
+.button-row { display: grid; grid-template-columns: 1fr 90px; gap: 8px; margin-top: 10px; }
+button {
+    min-height: 38px;
+    padding: 9px 12px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .6px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: filter .15s ease, opacity .15s ease;
+}
+button:hover:not(:disabled) { filter: brightness(1.15); }
+button:disabled { cursor: not-allowed; opacity: .4; }
+.primary-button { background: var(--accent); color: #062011; }
+.secondary-button { border-color: var(--border); background: #151c17; color: var(--text); }
+
+.telemetry-panel h2 { margin-bottom: 9px; }
+.status-item { margin: 8px 0; color: var(--text-dim); font-size: 10px; }
+.status-item strong { max-width: 62%; color: var(--text); font-size: 10px; text-align: right; overflow-wrap: anywhere; }
+.status-item strong.amber { color: var(--warn); }
+.subheading { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); }
+.note-panel { padding: 13px 15px; }
+.note-panel p:last-child { margin: 0; color: var(--text-dim); font-size: 10px; line-height: 1.6; }
+
+.log-panel { margin-top: 17px; }
+.sound-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 10px; cursor: pointer; }
+.sound-toggle input { accent-color: var(--accent); }
+.log-box {
+    height: 150px;
+    overflow-y: auto;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--panel-inner);
+    color: var(--text-dim);
+    font-size: 10px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+}
+
+@media (max-width: 790px) {
+    body { padding: 14px; }
+    .container { grid-template-columns: 1fr; }
+    .side-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .note-panel { grid-column: 1 / -1; }
+}
+@media (max-width: 520px) {
+    .topbar { align-items: flex-start; flex-direction: column; }
+    .side-column { grid-template-columns: 1fr; }
+    .note-panel { grid-column: auto; }
+}
+
+
+// ======================================================================
+// FILE: air def/assets/js/app.js
+// ======================================================================
+(() => {
+    'use strict';
+
+    const API_BASE = (window.RADAR_API_BASE || 'http://127.0.0.1:5000').replace(/\/$/, '');
+    const STREAM_URL = `${API_BASE}/api/radar/stream`;
+    const CONTROL_URL = `${API_BASE}/api/radar/control`;
+    const LOCK_URL = `${API_BASE}/api/lock`;
+
+    const canvas = document.getElementById('radarCanvas');
+    const ctx = canvas.getContext('2d');
+    const logBox = document.getElementById('output-container');
+    const connEl = document.getElementById('conn-status');
+    const modeEl = document.getElementById('lbl-mode');
+    const rangeSlider = document.getElementById('range-slider');
+    const rangeLabel = document.getElementById('range-label');
+    const durationSelect = document.getElementById('scan-duration');
+    const startScanButton = document.getElementById('btn-start-scan');
+    const stopScanButton = document.getElementById('btn-stop-scan');
+    const scanStatusEl = document.getElementById('scan-status');
+    const soundToggle = document.getElementById('chk-sound');
+
+    const lblAngle = document.getElementById('lbl-angle');
+    const lblDistance = document.getElementById('lbl-distance');
+    const lblXY = document.getElementById('lbl-xy');
+    const lblTargetId = document.getElementById('lbl-target-id');
+    const lblTargetCoords = document.getElementById('lbl-target-coords');
+    const lblTargetVel = document.getElementById('lbl-target-vel');
+    const lblTargetSize = document.getElementById('lbl-target-size');
+
+    let maxRangeCm = Number(rangeSlider.value);
+    let sweepAngle = 0;
+    let blips = new Map();
+    let lockedTrackId = null;
+    let lastPacketAt = 0;
+    let lastSequence = -1;
+    let eventSource = null;
+    let pendingState = null;
+    let streamConnected = false;
+    let latestScan = { running: true, duration_s: 0, remaining_s: null };
+    let audioContext = null;
+    let backgroundReady = false;
+    const backgroundCanvas = document.createElement('canvas');
+    const backgroundContext = backgroundCanvas.getContext('2d');
+
+    const MAX_LOG_LINES = 120;
+
+    function appendLog(message) {
+        const rows = logBox.textContent ? logBox.textContent.split('\n') : [];
+        rows.push(`[${new Date().toLocaleTimeString()}] ${message}`);
+        if (rows.length > MAX_LOG_LINES) rows.splice(0, rows.length - MAX_LOG_LINES);
+        logBox.textContent = rows.join('\n');
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function beep(frequency = 880, durationMs = 65, volume = 0.035) {
+        if (!soundToggle.checked) return;
+        try {
+            audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+            if (audioContext.state === 'suspended') audioContext.resume();
+            const oscillator = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            oscillator.type = 'square';
+            oscillator.frequency.value = frequency;
+            gain.gain.value = volume;
+            oscillator.connect(gain).connect(audioContext.destination);
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + durationMs / 1000);
+        } catch (_) {
+            // Audio is optional; unsupported browsers can still use the dashboard.
+        }
+    }
+
+    function geometry() {
+        const width = canvas.width;
+        const height = canvas.height;
+        const cx = width / 2;
+        const cy = height / 2;
+        const radius = Math.min(width, height) / 2 - 20;
+        return { width, height, cx, cy, radius };
+    }
+
+    // 0° is straight ahead (top of the display), +90° is to the right.
+    function polarToCanvas(bearingDeg, distanceCm) {
+        const { cx, cy, radius } = geometry();
+        const radians = (90 - bearingDeg) * Math.PI / 180;
+        const distance = (distanceCm / maxRangeCm) * radius;
+        return {
+            x: cx + distance * Math.cos(radians),
+            y: cy - distance * Math.sin(radians),
+            r: distance,
+            maxRadius: radius,
+        };
+    }
+
+    function sizeColor(sizeClass, selected) {
+        if (selected) return '#ff6262';
+        if (sizeClass === 'large') return '#ffc15c';
+        if (sizeClass === 'small') return '#00ccff';
+        return '#00ed72';
+    }
+
+    function drawStaticBackground() {
+        const { width, height, cx, cy, radius } = geometry();
+        if (backgroundCanvas.width !== width || backgroundCanvas.height !== height) {
+            backgroundCanvas.width = width;
+            backgroundCanvas.height = height;
+        }
+        backgroundContext.clearRect(0, 0, width, height);
+        backgroundContext.strokeStyle = 'rgba(0, 237, 114, 0.15)';
+        backgroundContext.lineWidth = 1;
+        for (let ring = 1; ring <= 3; ring++) {
+            backgroundContext.beginPath();
+            backgroundContext.arc(cx, cy, radius * ring / 3, 0, Math.PI * 2);
+            backgroundContext.stroke();
+        }
+
+        backgroundContext.strokeStyle = 'rgba(0, 237, 114, 0.10)';
+        for (let bearing = 0; bearing < 360; bearing += 30) {
+            const radians = (90 - bearing) * Math.PI / 180;
+            backgroundContext.beginPath();
+            backgroundContext.moveTo(cx, cy);
+            backgroundContext.lineTo(cx + radius * Math.cos(radians), cy - radius * Math.sin(radians));
+            backgroundContext.stroke();
+        }
+
+        // Mark the physical ESP32 scan limits (±80° from the forward direction).
+        backgroundContext.strokeStyle = 'rgba(255, 193, 92, 0.42)';
+        backgroundContext.setLineDash([5, 5]);
+        for (const bearing of [-80, 80]) {
+            const radians = (90 - bearing) * Math.PI / 180;
+            backgroundContext.beginPath();
+            backgroundContext.moveTo(cx, cy);
+            backgroundContext.lineTo(cx + radius * Math.cos(radians), cy - radius * Math.sin(radians));
+            backgroundContext.stroke();
+        }
+        backgroundContext.setLineDash([]);
+
+        backgroundContext.fillStyle = 'rgba(0, 237, 114, 0.55)';
+        backgroundContext.font = '10px ui-monospace, monospace';
+        backgroundContext.textAlign = 'center';
+        backgroundContext.textBaseline = 'middle';
+        for (let bearing = -90; bearing <= 90; bearing += 30) {
+            const radians = (90 - bearing) * Math.PI / 180;
+            backgroundContext.fillText(
+                `${bearing}°`,
+                cx + (radius + 12) * Math.cos(radians),
+                cy - (radius + 12) * Math.sin(radians)
+            );
+        }
+        backgroundReady = true;
+    }
+
+    function drawRadar() {
+        const { width, height, cx, cy, radius } = geometry();
+        if (!backgroundReady || backgroundCanvas.width !== width || backgroundCanvas.height !== height) {
+            drawStaticBackground();
+        }
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(backgroundCanvas, 0, 0);
+
+        const sweepRadians = (90 - sweepAngle) * Math.PI / 180;
+        const endX = cx + radius * Math.cos(sweepRadians);
+        const endY = cy - radius * Math.sin(sweepRadians);
+        const gradient = ctx.createLinearGradient(cx, cy, endX, endY);
+        gradient.addColorStop(0, 'rgba(0, 237, 114, 0)');
+        gradient.addColorStop(1, 'rgba(0, 237, 114, 0.72)');
+        ctx.strokeStyle = gradient;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+
+        const now = Date.now();
+        for (const [id, track] of blips) {
+            if (!Number.isFinite(track.distance_cm) || track.distance_cm <= 0) continue;
+            const point = polarToCanvas(track.angle_deg, track.distance_cm);
+            if (point.r > point.maxRadius) continue;
+
+            const selected = id === lockedTrackId;
+            const color = sizeColor(track.size_class, selected);
+            const baseRadius = selected || track.size_class === 'large' ? 6 : 4.5;
+            const amplitude = Number.isFinite(track.amplitude) ? track.amplitude : 1;
+            const dotRadius = baseRadius * (0.75 + amplitude * 0.5);
+
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, dotRadius, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+
+            if (selected) {
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+                const pulse = (Math.sin(now / 180) + 1) / 2;
+                ctx.beginPath();
+                ctx.arc(point.x, point.y, 10 + pulse * 9, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(255, 98, 98, ${0.7 - pulse * 0.45})`;
+                ctx.stroke();
+            }
+        }
+
+        if (lockedTrackId !== null) {
+            const selectedTrack = blips.get(lockedTrackId);
+            if (selectedTrack) {
+                const point = polarToCanvas(selectedTrack.angle_deg, selectedTrack.distance_cm);
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.lineTo(point.x, point.y);
+                ctx.setLineDash([4, 4]);
+                ctx.strokeStyle = 'rgba(255, 98, 98, 0.55)';
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+    }
+
+    function updateConnectionStatus() {
+        if (!streamConnected) {
+            connEl.textContent = '○ DISCONNECTED';
+            connEl.className = 'conn-status disconnected';
+            return;
+        }
+        const age = lastPacketAt ? Date.now() - lastPacketAt : Infinity;
+        if (latestScan.running && age < 1800) {
+            connEl.textContent = '● LIVE';
+            connEl.className = 'conn-status live';
+        } else if (!latestScan.running) {
+            connEl.textContent = '● CONNECTED · PAUSED';
+            connEl.className = 'conn-status live';
+        } else {
+            connEl.textContent = '○ WAITING FOR SENSOR';
+            connEl.className = 'conn-status disconnected';
+        }
+    }
+
+    function updateScanStatus(scan) {
+        if (!scan) return;
+        latestScan = scan;
+        if (!scan.running) {
+            scanStatusEl.textContent = scan.reason === 'duration_elapsed' ? 'Finished' : 'Stopped';
+            startScanButton.disabled = false;
+            stopScanButton.disabled = true;
+            modeEl.textContent = 'SCAN PAUSED';
+        } else {
+            if (scan.duration_s === 0) {
+                scanStatusEl.textContent = 'Running · continuous';
+            } else {
+                const remaining = scan.remaining_s == null ? scan.duration_s : Math.ceil(scan.remaining_s);
+                scanStatusEl.textContent = `Running · ${remaining}s left`;
+            }
+            startScanButton.disabled = true;
+            stopScanButton.disabled = false;
+            modeEl.textContent = `SCANNING · ${scan.sector || 'RADAR'}`;
+        }
+    }
+
+    function updateLockDisplay() {
+        const track = blips.get(lockedTrackId);
+        if (!track) return;
+        lblTargetId.textContent = `TRACK #${track.id}`;
+        lblTargetCoords.textContent = `${track.angle_deg.toFixed(1)}° / ${track.distance_cm.toFixed(1)}cm`;
+        lblTargetVel.textContent = `${(track.v_angle || 0).toFixed(1)}°/s · ${(track.v_distance || 0).toFixed(1)}cm/s`;
+        lblTargetSize.textContent = track.width_cm != null
+            ? `${track.width_cm.toFixed(1)}cm · ${(track.size_class || 'unknown').toUpperCase()}`
+            : 'measuring…';
+    }
+
+    function resetLockDisplay() {
+        lblTargetId.textContent = 'NONE';
+        lblTargetCoords.textContent = '—';
+        lblTargetVel.textContent = '—';
+        lblTargetSize.textContent = '—';
+    }
+
+    async function postJson(url, body) {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.status === 'error') {
+            throw new Error(result.message || `HTTP ${response.status}`);
+        }
+        return result;
+    }
+
+    async function startScan() {
+        const durationSeconds = Number(durationSelect.value);
+        startScanButton.disabled = true;
+        try {
+            const result = await postJson(CONTROL_URL, { action: 'start', duration_s: durationSeconds });
+            updateScanStatus(result.scan);
+            appendLog(durationSeconds === 0
+                ? '[SCAN] Started continuous scan.'
+                : `[SCAN] Started ${durationSeconds}s scan.`);
+            beep(1050, 65, 0.035);
+        } catch (error) {
+            appendLog(`[ERROR] Could not start scan: ${error.message}`);
+            startScanButton.disabled = false;
+        }
+    }
+
+    async function stopScan() {
+        stopScanButton.disabled = true;
+        try {
+            const result = await postJson(CONTROL_URL, { action: 'stop' });
+            updateScanStatus(result.scan);
+            appendLog('[SCAN] Stopped by dashboard.');
+            beep(350, 90, 0.035);
+        } catch (error) {
+            appendLog(`[ERROR] Could not stop scan: ${error.message}`);
+            stopScanButton.disabled = false;
+        }
+    }
+
+    async function setVisualLock(targetId) {
+        try {
+            await postJson(LOCK_URL, { mode: 'lock', target_id: targetId });
+        } catch (error) {
+            appendLog(`[WARN] Could not sync selected track: ${error.message}`);
+        }
+    }
+
+    async function clearVisualLock() {
+        try {
+            await postJson(LOCK_URL, { mode: 'scan' });
+        } catch (error) {
+            appendLog(`[WARN] Could not clear selected track: ${error.message}`);
+        }
+    }
+
+    function clearSelection(reason) {
+        if (lockedTrackId === null) return;
+        lockedTrackId = null;
+        resetLockDisplay();
+        clearVisualLock();
+        if (reason) appendLog(`[SELECTION CLEARED] ${reason}`);
+    }
+
+    function selectTrack(id) {
+        const track = blips.get(id);
+        if (!track) return;
+        lockedTrackId = id;
+        updateLockDisplay();
+        setVisualLock(id);
+        appendLog(`[TRACK SELECTED] #${id} at ${track.angle_deg.toFixed(1)}° / ${track.distance_cm.toFixed(1)}cm`);
+        beep(1200, 60, 0.04);
+    }
+
+    function processMeasurements(state) {
+        const measurement = state.last_measurement;
+        if (measurement) {
+            lblAngle.textContent = `${Number(measurement.angle_deg).toFixed(1)}°`;
+            const distance = Number(measurement.distance_cm);
+            lblDistance.textContent = Number.isFinite(distance) && distance > 0 ? `${distance.toFixed(1)} cm` : 'No echo';
+            lblXY.textContent = `${measurement.x}, ${measurement.y}`;
+            sweepAngle = Number(measurement.angle_deg) || 0;
+        }
+
+        const tracks = Array.isArray(state.tracked_objects) ? state.tracked_objects : [];
+        const nextTracks = new Map();
+        for (const track of tracks) {
+            nextTracks.set(track.id, track);
+            const previous = blips.get(track.id);
+            if (!previous && track.hits >= 3) {
+                appendLog(`[NEW TRACK #${track.id}] bearing=${track.angle_deg.toFixed(1)}° distance=${track.distance_cm.toFixed(1)}cm`);
+                beep(1200, 55, 0.025);
+            }
+            if (track.width_cm != null && previous && previous.width_cm == null) {
+                appendLog(`[SIZE] Track #${track.id}: estimated width ${track.width_cm.toFixed(1)}cm (${track.size_class})`);
+            }
+        }
+        blips = nextTracks;
+
+        if (lockedTrackId !== null && !blips.has(lockedTrackId)) {
+            clearSelection('selected track was lost');
+        } else if (lockedTrackId !== null) {
+            updateLockDisplay();
+        }
+    }
+
+    function processPendingState() {
+        if (!pendingState) return;
+        const state = pendingState;
+        pendingState = null;
+        updateScanStatus(state.scan);
+
+        const sequence = Number(state.seq);
+        if (Number.isFinite(sequence) && sequence !== lastSequence) {
+            lastSequence = sequence;
+            lastPacketAt = Date.now();
+            processMeasurements(state);
+        }
+
+        if (state.error) {
+            scanStatusEl.textContent = `Sensor error: ${state.error}`;
+        }
+    }
+
+    function connectStream() {
+        if (eventSource) eventSource.close();
+        appendLog(`Connecting to ${STREAM_URL}`);
+        eventSource = new EventSource(STREAM_URL);
+        eventSource.onopen = () => {
+            streamConnected = true;
+            appendLog('Backend event stream connected.');
+        };
+        eventSource.onmessage = (event) => {
+            try {
+                pendingState = JSON.parse(event.data);
+            } catch (_) {
+                appendLog('[WARN] Received an invalid stream packet.');
+            }
+        };
+        eventSource.onerror = () => {
+            streamConnected = false;
+            connEl.textContent = '○ RECONNECTING…';
+            connEl.className = 'conn-status disconnected';
+            // EventSource retries automatically.
+        };
+    }
+
+    canvas.addEventListener('click', (event) => {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = (event.clientX - rect.left) * canvas.width / rect.width;
+        const mouseY = (event.clientY - rect.top) * canvas.height / rect.height;
+        let nearestId = null;
+        let nearestDistance = 20;
+
+        for (const [id, track] of blips) {
+            if (!Number.isFinite(track.distance_cm) || track.distance_cm <= 0) continue;
+            const point = polarToCanvas(track.angle_deg, track.distance_cm);
+            const distance = Math.hypot(mouseX - point.x, mouseY - point.y);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearestId = id;
+            }
+        }
+
+        if (nearestId !== null) selectTrack(nearestId);
+        else clearSelection('manual deselection');
+    });
+
+    rangeSlider.addEventListener('input', () => {
+        maxRangeCm = Number(rangeSlider.value);
+        rangeLabel.textContent = String(maxRangeCm);
+        drawRadar();
+    });
+    startScanButton.addEventListener('click', startScan);
+    stopScanButton.addEventListener('click', stopScan);
+
+    function animationLoop() {
+        processPendingState();
+        drawRadar();
+        updateConnectionStatus();
+        requestAnimationFrame(animationLoop);
+    }
+
+    appendLog('Dashboard initialized.');
+    connectStream();
+    requestAnimationFrame(animationLoop);
+})();
+
+
+# ======================================================================
+# FILE: air def/backend/__init__.py
+# ======================================================================
+"""Radar backend package."""
+
+
+# ======================================================================
+# FILE: air def/backend/app.py
+# ======================================================================
+"""Flask API for the ESP32 ultrasonic radar and its browser dashboard."""
+from __future__ import annotations
+
+import json
+import os
+import threading
+import time
+from typing import Any
+
+import flask
+
+from process import get_latest_result, set_error, update_latest_result
+
+app = flask.Flask(__name__)
+
+# Both hardware and simulation remain idle until the dashboard starts a scan.
+_scan_lock = threading.Lock()
+_scan_state: dict[str, Any] = {
+    "running": False,
+    "duration_s": 0,
+    "started_at": time.time(),
+    "ends_at": None,
+    "reason": "startup",
+    "version": 0,
+}
+
+# Lock is a dashboard selection only. It is never sent to a motor.
+_visual_lock_guard = threading.Lock()
+_visual_lock: dict[str, Any] = {"mode": "scan", "target_id": None}
+
+
+def get_scan_status() -> dict[str, Any]:
+    """Return a copy of the scan state and expire timed scans consistently."""
+    with _scan_lock:
+        now = time.time()
+        ends_at = _scan_state["ends_at"]
+        if _scan_state["running"] and ends_at is not None and now >= ends_at:
+            _scan_state["running"] = False
+            _scan_state["reason"] = "duration_elapsed"
+            _scan_state["duration_s"] = 0
+            _scan_state["ends_at"] = None
+            _scan_state["version"] += 1
+
+        remaining = None
+        if _scan_state["running"] and _scan_state["ends_at"] is not None:
+            remaining = max(0.0, _scan_state["ends_at"] - now)
+
+        return {
+            "running": bool(_scan_state["running"]),
+            "duration_s": int(_scan_state["duration_s"]),
+            "remaining_s": round(remaining, 1) if remaining is not None else None,
+            "reason": _scan_state["reason"],
+            "version": _scan_state["version"],
+            "sector": "FRONT ±80°" if os.getenv("RADAR_SOURCE", "sim").lower() == "serial" else "360° SIMULATION",
+        }
+
+
+def scan_is_running() -> bool:
+    return get_scan_status()["running"]
+
+
+def _set_scan_state(running: bool, duration_s: int = 0, reason: str = "command") -> None:
+    now = time.time()
+    with _scan_lock:
+        _scan_state["running"] = running
+        _scan_state["duration_s"] = duration_s if running else 0
+        _scan_state["started_at"] = now if running else None
+        _scan_state["ends_at"] = now + duration_s if running and duration_s > 0 else None
+        _scan_state["reason"] = reason
+        _scan_state["version"] += 1
+
+
+def get_visual_lock() -> dict[str, Any]:
+    with _visual_lock_guard:
+        return dict(_visual_lock)
+
+
+def _build_source():
+    mode = os.getenv("RADAR_SOURCE", "sim").lower()
+    print(f"[*] Radar source: {mode}")
+    if mode == "sim":
+        from sources.simulate_radar import generate_measurements
+        return generate_measurements()
+    if mode == "serial":
+        from sources.arduino import read_arduino
+        return read_arduino()
+    raise ValueError(f"Unknown RADAR_SOURCE: {mode!r}")
+
+
+def data_ingestion_worker() -> None:
+    """Read sensor data continuously; pause publishing when a scan is stopped."""
+    while True:
+        try:
+            for measurement in _build_source():
+                if scan_is_running():
+                    update_latest_result(measurement)
+                    set_error(None)
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc)
+            print(f"[!] Ingestion error: {message}. Retrying in 2s…")
+            set_error(message)
+            time.sleep(2)
+
+
+@app.after_request
+def add_cors_headers(response: flask.Response) -> flask.Response:
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
+    response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+    return response
+
+
+def _public_state() -> dict[str, Any]:
+    state = get_latest_result()
+    state["scan"] = get_scan_status()
+    state["lock"] = get_visual_lock()
+    return state
+
+
+@app.route("/api/health", methods=["GET"])
+def health():
+    return flask.jsonify({"status": "ok", "source": os.getenv("RADAR_SOURCE", "sim").lower()}), 200
+
+
+@app.route("/api/radar/latest", methods=["GET"])
+def radar_latest():
+    return flask.jsonify(_public_state()), 200
+
+
+@app.route("/api/radar/stream", methods=["GET"])
+def radar_stream():
+    """Send state at 10 Hz so controls and countdowns update while paused too."""
+    def generate():
+        while True:
+            yield "data: " + json.dumps(_public_state(), separators=(",", ":")) + "\n\n"
+            time.sleep(0.1)
+
+    return flask.Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@app.route("/api/radar/control", methods=["POST", "OPTIONS"])
+def radar_control():
+    """Start a timed/continuous scan or stop the physical radar servo."""
+    if flask.request.method == "OPTIONS":
+        return ("", 204)
+
+    data = flask.request.get_json(silent=True) or {}
+    action = str(data.get("action", "")).strip().lower()
+    source = os.getenv("RADAR_SOURCE", "sim").lower()
+
+    if action == "stop":
+        if source == "serial":
+            try:
+                from sources.arduino import send_command
+                ok, message = send_command("STOP")
+            except Exception as exc:  # noqa: BLE001
+                return flask.jsonify({"status": "error", "message": str(exc)}), 502
+            if not ok:
+                return flask.jsonify({"status": "error", "message": message}), 502
+        _set_scan_state(False, reason="manual_stop")
+        return flask.jsonify({"status": "success", "scan": get_scan_status()}), 200
+
+    if action == "start":
+        raw_duration = data.get("duration_s", 0)
+        try:
+            duration_s = int(raw_duration)
+        except (TypeError, ValueError):
+            return flask.jsonify({"status": "error", "message": "duration_s must be an integer"}), 400
+        if duration_s < 0 or duration_s > 3600:
+            return flask.jsonify({"status": "error", "message": "duration_s must be between 0 and 3600"}), 400
+
+        if source == "serial":
+            try:
+                from sources.arduino import send_command
+                ok, message = send_command(f"START {duration_s * 1000}")
+            except Exception as exc:  # noqa: BLE001
+                return flask.jsonify({"status": "error", "message": str(exc)}), 502
+            if not ok:
+                return flask.jsonify({"status": "error", "message": message}), 502
+
+        _set_scan_state(True, duration_s=duration_s, reason="manual_start")
+        return flask.jsonify({"status": "success", "scan": get_scan_status()}), 200
+
+    return flask.jsonify({"status": "error", "message": "action must be 'start' or 'stop'"}), 400
+
+
+@app.route("/api/lock", methods=["POST", "OPTIONS"])
+def visual_lock():
+    """Store a dashboard-only selection; this endpoint never moves a motor."""
+    if flask.request.method == "OPTIONS":
+        return ("", 204)
+
+    data = flask.request.get_json(silent=True) or {}
+    mode = str(data.get("mode", "lock")).lower()
+    if mode not in ("lock", "scan"):
+        return flask.jsonify({"status": "error", "message": "mode must be 'lock' or 'scan'"}), 400
+
+    with _visual_lock_guard:
+        if mode == "scan":
+            _visual_lock.update({"mode": "scan", "target_id": None})
+        else:
+            target_id = data.get("target_id")
+            if target_id is None:
+                return flask.jsonify({"status": "error", "message": "target_id is required"}), 400
+            _visual_lock.update({"mode": "lock", "target_id": target_id})
+        lock_state = dict(_visual_lock)
+
+    return flask.jsonify({"status": "success", "lock": lock_state}), 200
+
+
+if __name__ == "__main__":
+    threading.Thread(target=data_ingestion_worker, daemon=True, name="radar-ingestion").start()
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+
+
+# ======================================================================
+# FILE: air def/backend/process.py
+# ======================================================================
+"""Polar->cartesian conversion plus multi-target tracker with size estimation."""
+import math
+import os
+import threading
+import time
+
+_state_lock = threading.Lock()
+
+# ----------------------------- tuning ---------------------------------
+# Widened so a target doesn't get orphaned into a "new track" every sweep.
+_ANGLE_GATE_DEG = 25.0   # was 12.0
+_DIST_GATE_CM   = 50.0   # was 25.0
+_TRACK_TTL_MS   = 6000   # was 4000 — survives the gap between sweep passes
+_VEL_ALPHA      = 0.35
+_VEL_MAX_DT_MS  = 500
+
+# -------- size classification tuning --------
+_SENSOR_BEAM_DEG = float(os.getenv(
+    "SENSOR_BEAM_DEG",
+    "0" if os.getenv("RADAR_SOURCE", "sim").lower() == "sim" else "15",
+))
+
+_WIDTH_ALPHA = 0.30
+
+_SIZE_THRESHOLDS = [
+    ("small",  0.0,          20.0),
+    ("medium", 20.0,         60.0),
+    ("large",  60.0, float("inf")),
+]
+
+# ----------------------------- state ----------------------------------
+_state = {
+    "seq": 0,
+    "last_update_ms": None,
+    "last_measurement": None,
+    "tracked_objects": [],
+    "error": None,
+}
+_tracks = []
+_next_track_id = 1
+
+_prev_sweep_id = None
+_prev_sweep_angle = None
+_sweep_direction = 0
+
+
+# --------------------------- conversion -------------------------------
+def _ang_diff(a, b):
+    """Signed shortest difference a - b in degrees, in (-180, 180]."""
+    return (a - b + 180.0) % 360.0 - 180.0
+
+
+def _polar_to_xy(angle_deg, distance_cm):
+    r = math.radians(angle_deg)
+    return distance_cm * math.sin(r), distance_cm * math.cos(r)
+
+
+def process_measurement(measurement):
+    ts       = measurement.get("timestamp_ms")
+    angle    = measurement.get("angle_deg")
+    distance = measurement.get("distance_cm")
+
+    x = y = 0.0
+    if distance is not None and distance > 0 and angle is not None:
+        x, y = _polar_to_xy(angle, distance)
+
+    return {
+        "timestamp_ms": ts,
+        "angle_deg":    angle,
+        "distance_cm":  distance,
+        "x":            round(x, 2),
+        "y":            round(y, 2),
+        "sweep_id":     measurement.get("sweep_id"),
+        "sweep_dir":    measurement.get("sweep_dir"),
+        "snr_db":       measurement.get("snr_db"),
+        "amplitude":    measurement.get("amplitude"),
+    }
+
+
+def iter_processed(measurement):
+    dets = measurement.get("detections")
+    if not dets:
+        yield process_measurement(measurement)
+        return
+    for d in dets:
+        yield process_measurement({**measurement, **d})
+
+
+# --------------------------- size helpers -----------------------------
+def _classify_width(w_cm):
+    for name, lo, hi in _SIZE_THRESHOLDS:
+        if lo <= w_cm < hi:
+            return name
+    return "unknown"
+
+
+def _width_from_span(span_deg, distance_cm):
+    corrected = max(0.0, span_deg - _SENSOR_BEAM_DEG)
+    if corrected <= 0:
+        return 0.0
+    return 2.0 * distance_cm * math.tan(math.radians(corrected / 2.0))
+
+
+# ---------------------------- tracker ---------------------------------
+def _associate(angle_deg, distance_cm):
+    best, best_cost = None, float("inf")
+    for t in _tracks:
+        da = abs(_ang_diff(angle_deg, t["angle_deg"]))
+        dd = abs(distance_cm - t["distance_cm"])
+        if da > _ANGLE_GATE_DEG or dd > _DIST_GATE_CM:
+            continue
+        cost = (da / _ANGLE_GATE_DEG) ** 2 + (dd / _DIST_GATE_CM) ** 2
+        if cost < best_cost:
+            best, best_cost = t, cost
+    return best
+
+
+def _finalize_spans():
+    for t in _tracks:
+        span = t["span_max_deg"] - t["span_min_deg"]
+        if span <= 0:
+            continue
+
+        w = _width_from_span(span, t["distance_cm"])
+
+        if t["width_cm"] is None:
+            t["width_cm"] = w
+        else:
+            a = _WIDTH_ALPHA
+            t["width_cm"] = (1 - a) * t["width_cm"] + a * w
+
+        t["size_class"] = _classify_width(t["width_cm"])
+
+        t["span_min_deg"] = t["angle_deg"]
+        t["span_max_deg"] = t["angle_deg"]
+
+
+def _detect_reversal(processed, angle):
+    global _prev_sweep_id, _prev_sweep_angle, _sweep_direction
+
+    sweep_id = processed.get("sweep_id")
+    if sweep_id is not None:
+        if _prev_sweep_id is not None and sweep_id != _prev_sweep_id:
+            _finalize_spans()
+        _prev_sweep_id = sweep_id
+        return
+
+    if _prev_sweep_angle is not None:
+        delta = angle - _prev_sweep_angle
+        if delta != 0:
+            new_dir = 1 if delta > 0 else -1
+            if _sweep_direction != 0 and new_dir != _sweep_direction:
+                _finalize_spans()
+            _sweep_direction = new_dir
+    _prev_sweep_angle = angle
+
+
+def _update_tracker(processed, now_ms):
+    global _next_track_id
+
+    angle    = processed["angle_deg"]
+    distance = processed["distance_cm"]
+
+    if angle is not None:
+        _detect_reversal(processed, angle)
+
+    if distance is not None and distance > 0:
+        t = _associate(angle, distance)
+        if t is None:
+            t = {
+                "id":             _next_track_id,
+                "angle_deg":      angle,
+                "distance_cm":    distance,
+                "x":              processed["x"],
+                "y":              processed["y"],
+                "v_angle":        0.0,
+                "v_distance":     0.0,
+                "hits":           0,
+                "first_seen_ms":  now_ms,
+                "last_update_ms": now_ms,
+                "span_min_deg":   angle,
+                "span_max_deg":   angle,
+                "width_cm":       None,
+                "size_class":     "unknown",
+                "snr_db":         processed.get("snr_db"),
+                "amplitude":      processed.get("amplitude"),
+            }
+            _next_track_id += 1
+            _tracks.append(t)
+        else:
+            dt = now_ms - t["last_update_ms"]
+            if 0 < dt <= _VEL_MAX_DT_MS:
+                a = _VEL_ALPHA
+                t["v_angle"]    = (1 - a) * t["v_angle"]    + a * _ang_diff(angle, t["angle_deg"]) * 1000.0 / dt
+                t["v_distance"] = (1 - a) * t["v_distance"] + a * (distance - t["distance_cm"]) * 1000.0 / dt
+
+            t["angle_deg"]      = angle
+            t["distance_cm"]    = distance
+            t["x"]              = processed["x"]
+            t["y"]              = processed["y"]
+            t["last_update_ms"] = now_ms
+
+            snr = processed.get("snr_db")
+            if snr is not None:
+                t["snr_db"] = snr
+            amp = processed.get("amplitude")
+            if amp is not None:
+                t["amplitude"] = amp
+
+            if angle < t["span_min_deg"]:
+                t["span_min_deg"] = angle
+            if angle > t["span_max_deg"]:
+                t["span_max_deg"] = angle
+
+        t["hits"] += 1
+
+    _tracks[:] = [
+        t for t in _tracks
+        if now_ms - t["last_update_ms"] <= _TRACK_TTL_MS
+    ]
+
+
+def _publish_tracks():
+    now_ms = int(time.time() * 1000)
+    _state["tracked_objects"] = [
+        {
+            "id":          t["id"],
+            "angle_deg":   t["angle_deg"],
+            "distance_cm": t["distance_cm"],
+            "x":           t["x"],
+            "y":           t["y"],
+            "v_angle":     round(t["v_angle"], 2),
+            "v_distance":  round(t["v_distance"], 2),
+            "hits":        t["hits"],
+            "age_ms":      now_ms - t["first_seen_ms"],
+            "width_cm":    round(t["width_cm"], 1) if t["width_cm"] is not None else None,
+            "size_class":  t["size_class"],
+            "snr_db":      t.get("snr_db"),
+            "amplitude":   t.get("amplitude"),
+        }
+        for t in _tracks
+    ]
+
+
+def update_latest_result(measurement):
+    now_ms = int(time.time() * 1000)
+    nearest = None
+
+    with _state_lock:
+        for processed in iter_processed(measurement):
+            _update_tracker(processed, now_ms)
+            d = processed["distance_cm"]
+            if d is not None and d > 0:
+                if nearest is None or d < nearest["distance_cm"]:
+                    nearest = processed
+        if nearest is None:
+            nearest = process_measurement(measurement)
+
+        _state["seq"] += 1
+        _state["last_update_ms"] = now_ms
+        _state["last_measurement"] = nearest
+        _publish_tracks()
+
+
+def get_latest_result():
+    with _state_lock:
+        return {
+            "seq":               _state["seq"],
+            "last_update_ms":    _state["last_update_ms"],
+            "last_measurement":  _state["last_measurement"],
+            "tracked_objects":   list(_state["tracked_objects"]),
+            "error":             _state["error"],
+        }
+
+
+def set_error(msg):
+    with _state_lock:
+        _state["error"] = msg
+
+
+# ======================================================================
+# FILE: air def/backend/run.py
+# ======================================================================
+"""Headless radar stream test (no Flask dashboard)."""
+import os
+import time
+
+from process import get_latest_result, set_error, update_latest_result
+
+
+def build_source():
+    source = os.getenv("RADAR_SOURCE", "sim").lower()
+    if source == "sim":
+        from sources.simulate_radar import generate_measurements
+        return generate_measurements()
+    if source == "serial":
+        from sources.arduino import read_arduino
+        return read_arduino()
+    raise ValueError(f"Unknown RADAR_SOURCE: {source!r}")
+
+
+def main():
+    print(f"Starting headless radar test: {os.getenv('RADAR_SOURCE', 'sim')}")
+    while True:
+        try:
+            for measurement in build_source():
+                update_latest_result(measurement)
+                state = get_latest_result()
+                latest = state["last_measurement"] or {}
+                print(
+                    f"\rangle={latest.get('angle_deg')}°  "
+                    f"distance={latest.get('distance_cm')}cm  "
+                    f"tracks={len(state['tracked_objects'])}",
+                    end="",
+                    flush=True,
+                )
+        except Exception as exc:  # noqa: BLE001
+            print(f"\nRadar error: {exc}; retrying in 2s")
+            set_error(str(exc))
+            time.sleep(2)
+
+
+if __name__ == "__main__":
+    main()
+
+
+# ======================================================================
+# FILE: air def/backend/sources/__init__.py
+# ======================================================================
+"""Radar measurement sources."""
+
+
+# ======================================================================
+# FILE: air def/backend/sources/arduino.py
+# ======================================================================
+"""Serial reader/writer for the ESP32 radar.
+
+ESP32 -> backend: timestamp_ms,bearing_deg,distance_cm
+backend -> ESP32: START <duration_ms>\n | STOP\n
+Bearing is relative to the front of the sensor: -80° left, 0° forward,
++80° right. A duration of zero means continuous scanning.
+"""
+from __future__ import annotations
+
+import os
+import threading
+import time
+from typing import Iterator
+
+import serial
+import serial.tools.list_ports
+
+_PORT_HINTS = ("arduino", "ch340", "cp210", "usb serial", "silicon labs", "usb jtag")
+_serial_lock = threading.Lock()
+_serial_handle: serial.Serial | None = None
+
+
+def find_arduino_port() -> str | None:
+    configured = os.getenv("ARDUINO_PORT")
+    if configured:
+        return configured
+
+    ports = list(serial.tools.list_ports.comports())
+    for port in ports:
+        description = f"{port.description or ''} {port.manufacturer or ''} {port.product or ''}".lower()
+        if any(hint in description for hint in _PORT_HINTS):
+            return port.device
+    return ports[0].device if len(ports) == 1 else None
+
+
+def send_command(command: str) -> tuple[bool, str]:
+    """Send a single allow-listed scan command to the connected ESP32."""
+    global _serial_handle
+    if command != "STOP" and not command.startswith("START "):
+        return False, "unsupported serial command"
+    handle = _serial_handle
+    if handle is None or not handle.is_open:
+        return False, "serial port is not open yet; check ARDUINO_PORT and close PlatformIO Serial Monitor"
+    try:
+        with _serial_lock:
+            handle.write((command.strip() + "\n").encode("ascii"))
+            handle.flush()
+        return True, "command sent"
+    except (serial.SerialException, OSError, ValueError) as exc:
+        _serial_handle = None
+        return False, str(exc)
+
+
+def read_arduino(port: str | None = None) -> Iterator[dict]:
+    """Yield parsed measurements and reconnect after serial failures."""
+    global _serial_handle
+
+    while True:
+        selected_port = port or find_arduino_port()
+        if not selected_port:
+            raise RuntimeError("No serial port found. Set ARDUINO_PORT=COM3 (or your actual port).")
+
+        try:
+            print(f"[esp32] opening {selected_port} at 115200 baud")
+            with serial.Serial(selected_port, 115200, timeout=1) as handle:
+                _serial_handle = handle
+                time.sleep(2.0)  # ESP32 commonly resets when the serial port opens.
+                handle.reset_input_buffer()
+
+                while True:
+                    raw = handle.readline()
+                    if not raw:
+                        continue
+                    line = raw.decode("utf-8", errors="ignore").strip()
+                    if not line or line.startswith("#"):
+                        continue
+
+                    parts = line.split(",")
+                    if len(parts) != 3:
+                        continue
+                    try:
+                        timestamp, bearing, distance = parts
+                        yield {
+                            "timestamp_ms": int(float(timestamp)),
+                            "angle_deg": float(bearing),
+                            "distance_cm": float(distance),
+                        }
+                    except (ValueError, TypeError):
+                        continue
+        except (serial.SerialException, OSError) as exc:
+            print(f"[esp32] serial error on {selected_port}: {exc}; retrying in 2s")
+            _serial_handle = None
+            port = None
+            time.sleep(2.0)
+        finally:
+            if _serial_handle is not None and not _serial_handle.is_open:
+                _serial_handle = None
+
+
+# ======================================================================
+# FILE: air def/backend/sources/simulate_radar.py
+# ======================================================================
+"""Simulated 360 degree radar sweep -- a pure source module.
+
+Pipeline position
+-----------------
+    simulate_radar.py  ->  process.py  ->  backend  ->  HTML/CSS/JS radar
+      (this file)          (tracker)     (transport)    (display)
+
+This module only produces raw beam samples.  It never talks to the
+network, never assumes how it will be rendered, and exposes nothing
+beyond :func:`generate_measurements` (the iterator ``process.py``
+consumes) and :func:`default_scene` / :class:`SimConfig` for setup.
+
+Sample payload (one per beam position)
+--------------------------------------
+::
+
+    {
+        "timestamp_ms":   int,        # ms since simulator start
+        "angle_deg":      float,      # current beam bearing (always sent)
+        "distance_cm":    float,      # nearest echo, -1.0 if none
+        "truth_id":       int | None, # ground truth, debug/scoring only
+        "snr_db":         float|None, # nearest echo strength
+        "detections":     [ ... ],    # every echo in this beam
+        "sweep_id":       int,        # increments on every pass reversal
+        "sweep_dir":      +1 | -1,    # +1 rising, -1 falling
+        "sweep_progress": float,      # 0..1 across the sector
+    }
+
+``detections`` entries are ``{"distance_cm", "truth_id", "snr_db",
+"amplitude"}``.  The top-level ``distance_cm`` / ``truth_id`` / ``snr_db``
+mirror the *nearest* entry so consumers that only read those three keys
+keep working unchanged.
+
+Truth data (``truth_id``, ``width_cm``) is exported for scoring only --
+the tracker in ``process.py`` never sees it and still has to estimate
+width from the observed angular span.
+"""
+from __future__ import annotations
+
+import math
+import random
+import time
+from dataclasses import dataclass, field
+from typing import Iterator, Optional
+
+
+# ======================================================================
+# Tunables
+# ======================================================================
+@dataclass
+class SimConfig:
+    """Everything tunable about the simulated front end."""
+
+    # -- sweep geometry -------------------------------------------------
+    min_angle_deg: float = 0.0
+    max_angle_deg: float = 360.0
+    step_deg: float = 1.0                # angular resolution of the beam
+    sweep_period_s: float = 0.015        # dwell time per beam position
+    min_range_cm: float = 2.0
+    max_range_cm: float = 400.0
+
+    # -- pacing (for headless tests) ------------------------------------
+    realtime: bool = True                # False -> run flat out
+    max_steps: Optional[int] = None      # None -> run forever
+
+    # -- detection model ------------------------------------------------
+    snr_ref_db: float = 20.0             # SNR of the reference target ...
+    ref_range_cm: float = 100.0          # ... at this range ...
+    ref_width_cm: float = 50.0           # ... with this physical width
+    snr_threshold_db: float = 6.0        # ~50 % single-dwell Pd
+    snr_softness_db: float = 2.0         # logistic slope (dB)
+    swerling: bool = True                # per-dwell echo fluctuation
+    swerling_sigma_db: float = 3.0       # 1-sigma fluctuation (dB)
+    miss_rate: float = 0.0               # flat dropout on top of the model
+    clutter_rate: float = 0.0            # expected false alarms per dwell
+
+    # -- measurement noise ---------------------------------------------
+    noise_cm: float = 1.5                # 1-sigma range noise at ref range
+    noise_range_gain: float = 0.0        # extra sigma per ref_range_cm
+
+    # -- output ---------------------------------------------------------
+    seed: Optional[int] = None           # None -> non-reproducible
+
+    def __post_init__(self) -> None:
+        if self.step_deg <= 0.0:
+            raise ValueError("step_deg must be > 0")
+        if self.max_angle_deg <= self.min_angle_deg:
+            raise ValueError("max_angle_deg must be > min_angle_deg")
+        if self.max_range_cm <= self.min_range_cm:
+            raise ValueError("max_range_cm must be > min_range_cm")
+        if self.sweep_period_s < 0.0:
+            raise ValueError("sweep_period_s must be >= 0")
+
+
+# ======================================================================
+# Scene objects (ground truth)
+# ======================================================================
+@dataclass
+class RadarObject:
+    """A single truth target.
+
+    ``width_cm`` is ground truth only -- the tracker never sees it.
+    Set ``angle_rate_dps`` for constant bearing drift, ``range_rate_cms``
+    for range motion, and ``osc_amp_deg`` for a sinusoidal patrol that
+    rides on top of the drift.
+    """
+
+    truth_id: int
+    angle_deg: float
+    distance_cm: float
+    width_cm: float
+
+    angle_rate_dps: float = 0.0          # constant bearing drift
+    range_rate_cms: float = 0.0          # + closing, - opening
+    osc_amp_deg: float = 0.0             # sinusoidal bearing patrol
+    osc_period_s: float = 6.0
+    osc_phase: float = 0.0
+
+    base_angle_deg: float = field(init=False, repr=False, default=0.0)
+
+    def __post_init__(self) -> None:
+        self.base_angle_deg = float(self.angle_deg)
+
+    @property
+    def half_width_deg(self) -> float:
+        """Angular half-width subtended by the disc at its current range."""
+        return math.degrees(math.atan2(self.width_cm, 2.0 * self.distance_cm))
+
+    def advance(self, dt_s: float, t_s: float) -> None:
+        """Integrate motion forward by ``dt_s`` seconds (elapsed: ``t_s``)."""
+        self.base_angle_deg += self.angle_rate_dps * dt_s
+        self.distance_cm = max(1.0, self.distance_cm + self.range_rate_cms * dt_s)
+
+        offset = 0.0
+        if self.osc_amp_deg:
+            offset = self.osc_amp_deg * math.sin(
+                2.0 * math.pi * t_s / self.osc_period_s + self.osc_phase
+            )
+        self.angle_deg = self.base_angle_deg + offset
+
+
+def default_scene() -> list[RadarObject]:
+    """The original four-target scene.
+
+    Width buckets (per ``process.py`` defaults):
+        <20 cm   -> small
+        20-60 cm -> medium
+        >60 cm   -> large
+    """
+    return [
+        RadarObject(1, 30.0, 100.0, 25.0),                                    # medium
+        RadarObject(2, 85.0, 180.0, 50.0, osc_amp_deg=8.0, osc_period_s=6.0), # medium, patrolling
+        RadarObject(3, 145.0, 75.0, 15.0),                                    # small
+        RadarObject(4, 55.0, 60.0, 90.0),                                     # LARGE
+        RadarObject(5, 230.0, 120.0, 30.0),                                   # medium (rear sector)
+        RadarObject(6, 305.0, 80.0, 15.0),                                    # small (rear sector)
+    ]
+
+
+# ======================================================================
+# Simulator
+# ======================================================================
+class RadarSimulator:
+    """Ping-pong 360 degree sweep over a set of truth objects."""
+
+    def __init__(
+        self,
+        config: Optional[SimConfig] = None,
+        objects: Optional[list[RadarObject]] = None,
+        rng: Optional[random.Random] = None,
+    ) -> None:
+        self.cfg = config or SimConfig()
+        self.objects = list(objects) if objects is not None else default_scene()
+        self.rng = rng or random.Random(self.cfg.seed)
+        self._last_t = 0.0
+
+    # -- detection model ------------------------------------------------
+    def _snr_db(self, obj: RadarObject) -> float:
+        """Radar-equation style SNR: RCS ~ width^2, two-way spread ~ 1/R^4."""
+        if obj.distance_cm <= 0.0 or obj.width_cm <= 0.0:
+            return -math.inf
+        cfg = self.cfg
+        return (
+            cfg.snr_ref_db
+            + 20.0 * math.log10(obj.width_cm / cfg.ref_width_cm)
+            - 40.0 * math.log10(obj.distance_cm / cfg.ref_range_cm)
+        )
+
+    def _fluctuate(self, snr_db: float) -> float:
+        """Swerling-I style per-dwell echo fluctuation."""
+        if not self.cfg.swerling:
+            return snr_db
+        return snr_db + self.rng.gauss(0.0, self.cfg.swerling_sigma_db)
+
+    def _pd(self, snr_db: float) -> float:
+        """Single-dwell probability of detection, logistic in SNR."""
+        cfg = self.cfg
+        x = (snr_db - cfg.snr_threshold_db) / max(cfg.snr_softness_db, 1e-9)
+        x = max(-60.0, min(60.0, x))          # keep exp() finite
+        return (1.0 / (1.0 + math.exp(-x))) * (1.0 - cfg.miss_rate)
+
+    # -- one beam position ----------------------------------------------
+    def _beam_sample(
+        self,
+        angle_deg: float,
+        timestamp_ms: int,
+        sweep_id: int,
+        sweep_dir: int,
+    ) -> dict:
+        cfg, rng = self.cfg, self.rng
+        detections: list[dict] = []
+
+        for obj in self.objects:
+            if not (cfg.min_range_cm <= obj.distance_cm <= cfg.max_range_cm):
+                continue
+            if abs(angle_deg - obj.angle_deg) > obj.half_width_deg:
+                continue
+
+            snr_db = self._fluctuate(self._snr_db(obj))
+            if rng.random() > self._pd(snr_db):
+                continue
+
+            sigma = cfg.noise_cm * (
+                1.0 + cfg.noise_range_gain * obj.distance_cm / cfg.ref_range_cm
+            )
+            distance_cm = obj.distance_cm + rng.gauss(0.0, sigma)
+            distance_cm = min(max(distance_cm, cfg.min_range_cm), cfg.max_range_cm)
+
+            detections.append({
+                "distance_cm": round(distance_cm, 2),
+                "truth_id":    obj.truth_id,
+                "snr_db":      round(snr_db, 2),
+                # 0..1, handy for display opacity / blip size
+                "amplitude":   round(1.0 / (1.0 + math.exp(
+                    -(snr_db - cfg.snr_threshold_db) / max(cfg.snr_softness_db, 1e-9)
+                )), 3),
+            })
+
+        # False alarm: random blip with no truth object behind it.
+        if cfg.clutter_rate > 0.0 and rng.random() < cfg.clutter_rate:
+            detections.append({
+                "distance_cm": round(rng.uniform(cfg.min_range_cm, cfg.max_range_cm), 2),
+                "truth_id":    None,
+                "snr_db":      None,
+                "amplitude":   0.0,
+            })
+
+        # Nearest echo becomes the legacy top-level scalar fields.
+        if detections:
+            nearest = min(detections, key=lambda d: d["distance_cm"])
+            distance_cm = nearest["distance_cm"]
+            truth_id    = nearest["truth_id"]
+            snr_db      = nearest["snr_db"]
+        else:
+            distance_cm = -1.0
+            truth_id    = None
+            snr_db      = None
+
+        span = cfg.max_angle_deg - cfg.min_angle_deg
+        return {
+            "timestamp_ms":   timestamp_ms,
+            "angle_deg":      round(angle_deg, 3),
+            "distance_cm":    distance_cm,        # backward compat
+            "truth_id":       truth_id,           # backward compat (debug)
+            "snr_db":         snr_db,
+            "detections":     detections,
+            "sweep_id":       sweep_id,
+            "sweep_dir":      sweep_dir,
+            "sweep_progress": round((angle_deg - cfg.min_angle_deg) / span, 4),
+        }
+
+    # -- main loop ------------------------------------------------------
+    def measurements(self) -> Iterator[dict]:
+        """Yield one beam sample per beam position.  Never terminates
+        unless ``SimConfig.max_steps`` is set."""
+        cfg = self.cfg
+
+        angle = float(cfg.min_angle_deg)
+        direction = 1
+        sweep_id = 1
+        steps = 0
+
+        t0 = time.monotonic()
+        next_tick = t0
+
+        while cfg.max_steps is None or steps < cfg.max_steps:
+            now = time.monotonic()
+            t_s = now - t0
+            dt_s = t_s - self._last_t
+            self._last_t = t_s
+
+            for obj in self.objects:
+                obj.advance(dt_s, t_s)
+
+            yield self._beam_sample(
+                angle_deg=angle,
+                timestamp_ms=int(t_s * 1000.0),
+                sweep_id=sweep_id,
+                sweep_dir=direction,
+            )
+            steps += 1
+
+            # --- advance the beam one step, bouncing off sector edges ---
+            angle += cfg.step_deg * direction
+            if angle >= cfg.max_angle_deg:
+                angle, direction, sweep_id = float(cfg.max_angle_deg), -1, sweep_id + 1
+            elif angle <= cfg.min_angle_deg:
+                angle, direction, sweep_id = float(cfg.min_angle_deg), 1, sweep_id + 1
+
+            # --- absolute-deadline pacing (no cumulative drift) ---------
+            if not cfg.realtime:
+                continue
+            next_tick += cfg.sweep_period_s
+            delay = next_tick - time.monotonic()
+            if delay > 0.0:
+                time.sleep(delay)
+            else:
+                next_tick = time.monotonic()   # fell behind; resync
+
+
+# ======================================================================
+# Public entry point used by process.py
+# ======================================================================
+def generate_measurements(
+    config: Optional[SimConfig] = None,
+    objects: Optional[list[RadarObject]] = None,
+) -> Iterator[dict]:
+    """Drop-in replacement for the original generator.
+
+    Signature and yielded scalar keys are unchanged, so ``process.py``
+    can keep doing ``for m in generate_measurements(): ...`` verbatim.
+    """
+    yield from RadarSimulator(config, objects).measurements()
+
+
+// ======================================================================
+// FILE: air def/src/main.cpp
+// ======================================================================
+#include <Arduino.h>
+#include <ESP32Servo.h>
+#include <cstdlib>
+#include <cstring>
+
+// HC-SR04 pins. ECHO must be reduced to 3.3 V with a voltage divider.
+constexpr uint8_t TRIG_PIN = 25;
+constexpr uint8_t ECHO_PIN = 26;
+constexpr uint8_t RADAR_SERVO_PIN = 27;
+
+// The SG90 is a 180-degree servo. Keep a margin away from its mechanical stops.
+constexpr int SERVO_MIN_DEG = 10;
+constexpr int SERVO_MAX_DEG = 170;
+constexpr int SERVO_STEP_DEG = 2;
+constexpr uint32_t ECHO_TIMEOUT_US = 30000UL;
+constexpr uint32_t SERVO_SETTLE_MS = 55;
+constexpr uint32_t PING_INTERVAL_MS = 35;
+constexpr uint32_t MAX_SCAN_DURATION_MS = 3600000UL;
+
+Servo radarServo;
+int servoAngle = SERVO_MIN_DEG;
+int sweepDirection = 1;
+bool scanning = false;                // Wait for the dashboard to start a scan.
+uint32_t scanStartedAt = 0;
+uint32_t scanDurationMs = 0;           // 0 means continuous.
+uint32_t servoMovedAt = 0;
+uint32_t lastPingAt = 0;
+char commandBuffer[48];
+size_t commandLength = 0;
+
+void setServoAngle(int angle) {
+    servoAngle = constrain(angle, SERVO_MIN_DEG, SERVO_MAX_DEG);
+    radarServo.write(servoAngle);
+    servoMovedAt = millis();
+}
+
+void startScan(uint32_t durationMs) {
+    scanDurationMs = min(durationMs, MAX_SCAN_DURATION_MS);
+    scanStartedAt = millis();
+    scanning = true;
+    sweepDirection = 1;
+    setServoAngle(SERVO_MIN_DEG);
+    Serial.println("#SCAN,STARTED");
+}
+
+void stopScan(const char *reason) {
+    scanning = false;
+    scanDurationMs = 0;
+    Serial.print("#SCAN,STOPPED,");
+    Serial.println(reason);
+}
+
+void handleCommand(char *line) {
+    while (*line == ' ' || *line == '\t') ++line;
+
+    if (strncmp(line, "STOP", 4) == 0) {
+        stopScan("command");
+        return;
+    }
+
+    if (strncmp(line, "START", 5) == 0) {
+        char *value = line + 5;
+        while (*value == ' ' || *value == '\t') ++value;
+        uint32_t durationMs = 0;
+        if (*value != '\0') {
+            char *end = nullptr;
+            unsigned long parsed = strtoul(value, &end, 10);
+            if (end == value || (*end != '\0' && *end != '\r')) {
+                Serial.println("#ERROR,INVALID_DURATION");
+                return;
+            }
+            durationMs = static_cast<uint32_t>(parsed);
+        }
+        startScan(durationMs);
+        return;
+    }
+
+    Serial.println("#ERROR,UNKNOWN_COMMAND");
+}
+
+void readSerialCommands() {
+    while (Serial.available() > 0) {
+        const char ch = static_cast<char>(Serial.read());
+        if (ch == '\n' || ch == '\r') {
+            if (commandLength > 0) {
+                commandBuffer[commandLength] = '\0';
+                handleCommand(commandBuffer);
+                commandLength = 0;
+            }
+        } else if (commandLength < sizeof(commandBuffer) - 1) {
+            commandBuffer[commandLength++] = ch;
+        } else {
+            commandLength = 0;
+            Serial.println("#ERROR,COMMAND_TOO_LONG");
+        }
+    }
+}
+
+float readDistanceCm() {
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(3);
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+
+    const unsigned long duration = pulseIn(ECHO_PIN, HIGH, ECHO_TIMEOUT_US);
+    if (duration == 0) return -1.0f;
+
+    const float distanceCm = duration * 0.0343f / 2.0f;
+    if (distanceCm < 2.0f || distanceCm > 400.0f) return -1.0f;
+    return distanceCm;
+}
+
+void setup() {
+    Serial.begin(115200);
+    pinMode(TRIG_PIN, OUTPUT);
+    pinMode(ECHO_PIN, INPUT);
+    digitalWrite(TRIG_PIN, LOW);
+
+    radarServo.setPeriodHertz(50);
+    radarServo.attach(RADAR_SERVO_PIN, 500, 2400);
+
+    Serial.println("#ESP32_RADAR_READY");
+    Serial.println("#FORMAT,timestamp_ms,bearing_deg,distance_cm");
+    setServoAngle(90);                 // Park at the centre while idle.
+    Serial.println("#SCAN,STOPPED,boot");
+}
+
+void loop() {
+    readSerialCommands();
+
+    if (!scanning) return;
+
+    const uint32_t now = millis();
+    if (scanDurationMs > 0 && static_cast<uint32_t>(now - scanStartedAt) >= scanDurationMs) {
+        stopScan("duration_elapsed");
+        return;
+    }
+
+    if (static_cast<uint32_t>(now - servoMovedAt) < SERVO_SETTLE_MS) return;
+    if (static_cast<uint32_t>(now - lastPingAt) < PING_INTERVAL_MS) return;
+    lastPingAt = now;
+
+    const float distanceCm = readDistanceCm();
+
+
+    const int bearingDeg = servoAngle - 90;
+    Serial.printf("%lu,%d,%.2f\n",
+                  static_cast<unsigned long>(millis()), bearingDeg, distanceCm);
+
+    int nextAngle = servoAngle + sweepDirection * SERVO_STEP_DEG;
+    if (nextAngle >= SERVO_MAX_DEG) {
+        nextAngle = SERVO_MAX_DEG;
+        sweepDirection = -1;
+    } else if (nextAngle <= SERVO_MIN_DEG) {
+        nextAngle = SERVO_MIN_DEG;
+        sweepDirection = 1;
+    }
+    setServoAngle(nextAngle);
+}
+
+
